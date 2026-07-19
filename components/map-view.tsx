@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -11,8 +12,14 @@ import {
 import { createPortal } from "react-dom";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { MAP_STYLES, STORAGE_KEYS, type MapStyleId } from "@/lib/map-style";
-import { NOTE_COLOR_HEX, type LatLng, type Note } from "@/lib/types";
+import { NotePin } from "@/components/note-pin";
+import {
+  MAP_STYLES,
+  STORAGE_KEYS,
+  placesToggleSupported,
+  type MapStyleId,
+} from "@/lib/map-style";
+import type { LatLng, Note } from "@/lib/types";
 
 export interface MapViewHandle {
   flyTo: (center: LatLng, zoom?: number) => void;
@@ -25,6 +32,7 @@ interface MapViewProps {
   draft: LatLng | null;
   position: LatLng | null;
   styleId: MapStyleId;
+  showPlaces: boolean;
   onMapClick: (point: LatLng) => void;
   onMarkerClick: (note: Note) => void;
   onDraftMove: (point: LatLng) => void;
@@ -48,6 +56,16 @@ function loadCamera(): CameraState {
   return { center: [0, 24], zoom: 1.6 };
 }
 
+/** Hide/show the basemap's own POI labels on vector styles. */
+function applyPlacesVisibility(map: maplibregl.Map, show: boolean) {
+  for (const layer of map.getStyle()?.layers ?? []) {
+    const sourceLayer = "source-layer" in layer ? layer["source-layer"] : "";
+    if (/poi/i.test(layer.id) || /poi/i.test(sourceLayer ?? "")) {
+      map.setLayoutProperty(layer.id, "visibility", show ? "visible" : "none");
+    }
+  }
+}
+
 export function MapView({
   ref,
   notes,
@@ -55,6 +73,7 @@ export function MapView({
   draft,
   position,
   styleId,
+  showPlaces,
   onMapClick,
   onMarkerClick,
   onDraftMove,
@@ -63,9 +82,11 @@ export function MapView({
   const [map, setMap] = useState<maplibregl.Map | null>(null);
   const styleRef = useRef<MapStyleId>(styleId);
 
-  // Keep latest callbacks without re-binding map listeners.
+  // Latest values for map-owned listeners, without re-binding them.
   const onMapClickRef = useRef(onMapClick);
   onMapClickRef.current = onMapClick;
+  const showPlacesRef = useRef(showPlaces);
+  showPlacesRef.current = showPlaces;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -79,6 +100,11 @@ export function MapView({
     });
 
     instance.on("click", (e) => {
+      // MapLibre's click listener lives on the canvas container, which also
+      // contains marker elements — React-level stopPropagation runs too late
+      // to help, so filter marker taps out here.
+      const target = e.originalEvent.target as HTMLElement | null;
+      if (target?.closest("[data-been-marker]")) return;
       onMapClickRef.current({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
 
@@ -95,6 +121,14 @@ export function MapView({
       } catch {}
     });
 
+    // Re-apply the POI preference whenever a style finishes loading
+    // (initial load and every setStyle swap).
+    instance.on("styledata", () => {
+      if (placesToggleSupported(styleRef.current)) {
+        applyPlacesVisibility(instance, showPlacesRef.current);
+      }
+    });
+
     setMap(instance);
     return () => {
       instance.remove();
@@ -108,6 +142,13 @@ export function MapView({
     styleRef.current = styleId;
     map.setStyle(MAP_STYLES[styleId]);
   }, [map, styleId]);
+
+  // Toggle POI labels in place.
+  useEffect(() => {
+    if (map?.isStyleLoaded() && placesToggleSupported(styleId)) {
+      applyPlacesVisibility(map, showPlaces);
+    }
+  }, [map, showPlaces, styleId]);
 
   useImperativeHandle(ref, () => ({
     flyTo: (center, zoom) => {
@@ -126,20 +167,13 @@ export function MapView({
       {map && (
         <>
           {notes.map((note) => (
-            <MapMarker key={note.id} map={map} lat={note.lat} lng={note.lng}>
-              <button
-                type="button"
-                aria-label={note.title || "Saved place"}
-                className={`note-pin ${selectedId === note.id ? "is-selected" : ""}`}
-                style={{ background: NOTE_COLOR_HEX[note.color] ?? NOTE_COLOR_HEX.coral }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMarkerClick(note);
-                }}
-              >
-                <span>{note.emoji}</span>
-              </button>
-            </MapMarker>
+            <NoteMarker
+              key={note.id}
+              map={map}
+              note={note}
+              selected={selectedId === note.id}
+              onClick={onMarkerClick}
+            />
           ))}
           {draft && (
             <MapMarker
@@ -149,9 +183,7 @@ export function MapView({
               draggable
               onDragEnd={onDraftMove}
             >
-              <div className="note-pin is-draft bg-accent">
-                <span>📍</span>
-              </div>
+              <NotePin emoji="📍" color="coral" draft />
             </MapMarker>
           )}
           {position && (
@@ -165,6 +197,33 @@ export function MapView({
   );
 }
 
+interface NoteMarkerProps {
+  map: maplibregl.Map;
+  note: Note;
+  selected: boolean;
+  onClick: (note: Note) => void;
+}
+
+// Memoized so a position tick or draft move doesn't reconcile every pin.
+const NoteMarker = memo(function NoteMarker({
+  map,
+  note,
+  selected,
+  onClick,
+}: NoteMarkerProps) {
+  return (
+    <MapMarker map={map} lat={note.lat} lng={note.lng}>
+      <NotePin
+        emoji={note.emoji}
+        color={note.color}
+        selected={selected}
+        label={note.title || "Saved place"}
+        onClick={() => onClick(note)}
+      />
+    </MapMarker>
+  );
+});
+
 interface MapMarkerProps {
   map: maplibregl.Map;
   lat: number;
@@ -176,7 +235,7 @@ interface MapMarkerProps {
 }
 
 /** Renders React children as a MapLibre HTML marker via a portal. */
-function MapMarker({
+export function MapMarker({
   map,
   lat,
   lng,
@@ -185,7 +244,11 @@ function MapMarker({
   onDragEnd,
   children,
 }: MapMarkerProps) {
-  const [container] = useState(() => document.createElement("div"));
+  const [container] = useState(() => {
+    const el = document.createElement("div");
+    el.dataset.beenMarker = "1";
+    return el;
+  });
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const onDragEndRef = useRef(onDragEnd);
   onDragEndRef.current = onDragEnd;

@@ -16,10 +16,13 @@ import {
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import type { NewNote } from "@/hooks/use-notes";
+import { formatDistance } from "@/lib/geo";
 import {
   NOTE_COLORS,
   NOTE_COLOR_HEX,
   NOTE_EMOJIS,
+  NOTE_PHOTOS_BUCKET,
+  REMIND_RADIUS,
   type Note,
   type NoteColor,
   type NotePhoto,
@@ -39,7 +42,10 @@ interface NoteSheetProps {
   onCreate: (fields: NewNote) => Promise<Note | null>;
   onUpdate: (id: string, patch: Partial<Note>) => Promise<Note | null>;
   onDelete: (id: string) => Promise<boolean>;
+  onReminderEnabled: () => void;
 }
+
+const SIGNED_URL_TTL_S = 3600;
 
 export function NoteSheet({
   userId,
@@ -49,6 +55,7 @@ export function NoteSheet({
   onCreate,
   onUpdate,
   onDelete,
+  onReminderEnabled,
 }: NoteSheetProps) {
   const supabase = useMemo(() => createClient(), []);
   const [title, setTitle] = useState(note?.title ?? "");
@@ -58,36 +65,49 @@ export function NoteSheet({
   const [remindEnabled, setRemindEnabled] = useState(
     note?.remind_enabled ?? false,
   );
-  const [remindRadius, setRemindRadius] = useState(note?.remind_radius_m ?? 250);
+  const [remindRadius, setRemindRadius] = useState(
+    note?.remind_radius_m ?? REMIND_RADIUS.default,
+  );
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [photos, setPhotos] = useState<NotePhoto[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const noteId = note?.id ?? null;
   const address = note?.address ?? draft?.address ?? null;
   const shareToken = note?.share_token ?? null;
 
+  // The bucket is private: photos render via short-lived signed URLs.
   useEffect(() => {
-    if (!note) return;
+    if (!noteId) return;
     let cancelled = false;
-    supabase
-      .from("note_photos")
-      .select("*")
-      .eq("note_id", note.id)
-      .order("created_at")
-      .then(({ data }) => {
-        if (!cancelled && data) setPhotos(data as NotePhoto[]);
-      });
+    (async () => {
+      const { data: rows } = await supabase
+        .from("note_photos")
+        .select("*")
+        .eq("note_id", noteId)
+        .order("created_at");
+      if (cancelled || !rows?.length) return;
+      const paths = (rows as NotePhoto[]).map((p) => p.storage_path);
+      const { data: signed } = await supabase.storage
+        .from(NOTE_PHOTOS_BUCKET)
+        .createSignedUrls(paths, SIGNED_URL_TTL_S);
+      if (cancelled) return;
+      setPhotos(rows as NotePhoto[]);
+      setPhotoUrls(
+        Object.fromEntries(
+          (signed ?? [])
+            .filter((s) => s.signedUrl)
+            .map((s) => [s.path, s.signedUrl]),
+        ),
+      );
+    })();
     return () => {
       cancelled = true;
     };
-  }, [note, supabase]);
-
-  function publicUrl(path: string) {
-    return supabase.storage.from("note-photos").getPublicUrl(path).data
-      .publicUrl;
-  }
+  }, [noteId, supabase]);
 
   async function handleSave() {
     if (saving) return;
@@ -124,16 +144,22 @@ export function NoteSheet({
 
   function toggleReminder(next: boolean) {
     setRemindEnabled(next);
-    if (next && typeof Notification !== "undefined" && Notification.permission === "default") {
-      void Notification.requestPermission();
+    if (next) {
+      onReminderEnabled();
+      if (
+        typeof Notification !== "undefined" &&
+        Notification.permission === "default"
+      ) {
+        void Notification.requestPermission();
+      }
     }
   }
 
   async function handleShareToggle() {
     if (!note) return;
     if (shareToken) {
-      await onUpdate(note.id, { share_token: null });
-      toast.success("Link disabled");
+      const updated = await onUpdate(note.id, { share_token: null });
+      if (updated) toast.success("Link disabled");
     } else {
       const updated = await onUpdate(note.id, {
         share_token: crypto.randomUUID(),
@@ -165,12 +191,12 @@ export function NoteSheet({
   async function handleUpload(files: FileList | null) {
     if (!note || !files?.length) return;
     setUploading(true);
-    try {
-      for (const file of Array.from(files)) {
+    const results = await Promise.allSettled(
+      Array.from(files).map(async (file) => {
         const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
         const path = `${userId}/${note.id}/${crypto.randomUUID()}.${ext}`;
         const { error: uploadError } = await supabase.storage
-          .from("note-photos")
+          .from(NOTE_PHOTOS_BUCKET)
           .upload(path, file, { contentType: file.type || undefined });
         if (uploadError) throw uploadError;
         const { data, error } = await supabase
@@ -179,21 +205,51 @@ export function NoteSheet({
           .select()
           .single();
         if (error) throw error;
-        setPhotos((prev) => [...prev, data as NotePhoto]);
-      }
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? `Upload failed: ${err.message}` : "Upload failed",
-      );
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+        const { data: signed } = await supabase.storage
+          .from(NOTE_PHOTOS_BUCKET)
+          .createSignedUrl(path, SIGNED_URL_TTL_S);
+        return { row: data as NotePhoto, url: signed?.signedUrl };
+      }),
+    );
+    const added = results
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => r.value);
+    if (added.length) {
+      setPhotos((prev) => [...prev, ...added.map((a) => a.row)]);
+      setPhotoUrls((prev) => ({
+        ...prev,
+        ...Object.fromEntries(
+          added.filter((a) => a.url).map((a) => [a.row.storage_path, a.url!]),
+        ),
+      }));
     }
+    const failed = results.length - added.length;
+    if (failed > 0) {
+      const firstError = results.find((r) => r.status === "rejected") as
+        | PromiseRejectedResult
+        | undefined;
+      const message =
+        firstError?.reason instanceof Error ? firstError.reason.message : "";
+      toast.error(
+        `${failed} photo${failed > 1 ? "s" : ""} failed to upload${message ? `: ${message}` : ""}`,
+      );
+    }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function handleDeletePhoto(photo: NotePhoto) {
-    await supabase.storage.from("note-photos").remove([photo.storage_path]);
-    await supabase.from("note_photos").delete().eq("id", photo.id);
+    const { error: storageError } = await supabase.storage
+      .from(NOTE_PHOTOS_BUCKET)
+      .remove([photo.storage_path]);
+    const { error: dbError } = await supabase
+      .from("note_photos")
+      .delete()
+      .eq("id", photo.id);
+    if (storageError || dbError) {
+      toast.error("Couldn't delete photo — try again.");
+      return;
+    }
     setPhotos((prev) => prev.filter((p) => p.id !== photo.id));
   }
 
@@ -306,16 +362,14 @@ export function NoteSheet({
               <div className="mb-1 flex justify-between text-xs text-muted">
                 <span>Within</span>
                 <span className="font-medium text-foreground">
-                  {remindRadius >= 1000
-                    ? `${(remindRadius / 1000).toFixed(1)} km`
-                    : `${remindRadius} m`}
+                  {formatDistance(remindRadius)}
                 </span>
               </div>
               <input
                 type="range"
-                min={50}
-                max={2000}
-                step={50}
+                min={REMIND_RADIUS.min}
+                max={REMIND_RADIUS.max}
+                step={REMIND_RADIUS.step}
                 value={remindRadius}
                 onChange={(e) => setRemindRadius(Number(e.target.value))}
                 className="w-full accent-(--accent)"
@@ -351,12 +405,14 @@ export function NoteSheet({
               <div className="grid grid-cols-3 gap-2">
                 {photos.map((photo) => (
                   <div key={photo.id} className="group relative aspect-square">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={publicUrl(photo.storage_path)}
-                      alt=""
-                      className="size-full rounded-xl object-cover"
-                    />
+                    {photoUrls[photo.storage_path] && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={photoUrls[photo.storage_path]}
+                        alt=""
+                        className="size-full rounded-xl object-cover"
+                      />
+                    )}
                     <button
                       type="button"
                       aria-label="Delete photo"

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { MapPin } from "lucide-react";
-import { NOTE_COLOR_HEX, type SharedNote } from "@/lib/types";
+import { noteColorHex, type SharedNote } from "@/lib/types";
 
 const SharedNoteMap = dynamic(
   () => import("@/components/shared-note-map").then((m) => m.SharedNoteMap),
@@ -15,7 +15,7 @@ interface SharedNoteCardProps {
 }
 
 export function SharedNoteCard({ note, photoUrls }: SharedNoteCardProps) {
-  const color = NOTE_COLOR_HEX[note.color] ?? NOTE_COLOR_HEX.coral;
+  const color = noteColorHex(note.color);
   const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${note.lat},${note.lng}`;
 
   return (

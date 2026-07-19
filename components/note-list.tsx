@@ -1,8 +1,9 @@
 "use client";
 
+import { useMemo } from "react";
 import { Bell, ChevronRight, MapPinned, X } from "lucide-react";
 import { distanceMeters, formatDistance } from "@/lib/geo";
-import { NOTE_COLOR_HEX, type LatLng, type Note } from "@/lib/types";
+import { noteColorHex, type LatLng, type Note } from "@/lib/types";
 
 interface NoteListProps {
   open: boolean;
@@ -19,16 +20,21 @@ export function NoteList({
   onClose,
   onSelect,
 }: NoteListProps) {
-  if (!open) return null;
+  // Compute each distance once, sort once, and only when inputs change.
+  const rows = useMemo(() => {
+    const withDistance = notes.map((note) => ({
+      note,
+      distance: position ? distanceMeters(position, note) : null,
+    }));
+    withDistance.sort((a, b) =>
+      a.distance !== null && b.distance !== null
+        ? a.distance - b.distance
+        : b.note.updated_at.localeCompare(a.note.updated_at),
+    );
+    return withDistance;
+  }, [notes, position]);
 
-  const sorted = [...notes].sort((a, b) => {
-    if (position) {
-      return (
-        distanceMeters(position, a) - distanceMeters(position, b)
-      );
-    }
-    return b.updated_at.localeCompare(a.updated_at);
-  });
+  if (!open) return null;
 
   return (
     <div className="absolute inset-0 z-20 flex flex-col justify-end">
@@ -56,7 +62,7 @@ export function NoteList({
           </button>
         </div>
 
-        {sorted.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-6 py-10 text-center text-muted">
             <MapPinned className="size-8" />
             <p className="text-sm">
@@ -65,7 +71,7 @@ export function NoteList({
           </div>
         ) : (
           <ul className="overflow-y-auto px-2" style={{ maxHeight: "55dvh" }}>
-            {sorted.map((note) => (
+            {rows.map(({ note, distance }) => (
               <li key={note.id}>
                 <button
                   type="button"
@@ -74,9 +80,7 @@ export function NoteList({
                 >
                   <span
                     className="grid size-10 shrink-0 place-items-center rounded-full text-lg"
-                    style={{
-                      background: `${NOTE_COLOR_HEX[note.color] ?? NOTE_COLOR_HEX.coral}26`,
-                    }}
+                    style={{ background: `${noteColorHex(note.color)}26` }}
                   >
                     {note.emoji}
                   </span>
@@ -88,10 +92,10 @@ export function NoteList({
                       )}
                     </span>
                     <span className="block truncate text-xs text-muted">
-                      {position
-                        ? `${formatDistance(distanceMeters(position, note))} away`
+                      {distance !== null
+                        ? `${formatDistance(distance)} away`
                         : null}
-                      {position && note.address ? " · " : ""}
+                      {distance !== null && note.address ? " · " : ""}
                       {note.address ?? ""}
                     </span>
                   </span>

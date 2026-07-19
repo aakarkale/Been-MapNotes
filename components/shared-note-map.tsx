@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { MapMarker } from "@/components/map-view";
+import { NotePin } from "@/components/note-pin";
 import { MAP_STYLES } from "@/lib/map-style";
 
 interface SharedNoteMapProps {
@@ -15,10 +17,11 @@ interface SharedNoteMapProps {
 /** Small read-only map for the public share page. */
 export function SharedNoteMap({ lat, lng, color, emoji }: SharedNoteMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [map, setMap] = useState<maplibregl.Map | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const map = new maplibregl.Map({
+    const instance = new maplibregl.Map({
       container: containerRef.current,
       style: MAP_STYLES.streets,
       center: [lng, lat],
@@ -26,23 +29,20 @@ export function SharedNoteMap({ lat, lng, color, emoji }: SharedNoteMapProps) {
       interactive: false,
       attributionControl: { compact: true },
     });
-
-    const el = document.createElement("div");
-    el.className = "note-pin";
-    el.style.background = color;
-    const span = document.createElement("span");
-    span.textContent = emoji;
-    el.appendChild(span);
-
-    const marker = new maplibregl.Marker({ element: el, anchor: "bottom" })
-      .setLngLat([lng, lat])
-      .addTo(map);
-
+    setMap(instance);
     return () => {
-      marker.remove();
-      map.remove();
+      instance.remove();
+      setMap(null);
     };
-  }, [lat, lng, color, emoji]);
+  }, [lat, lng]);
 
-  return <div ref={containerRef} className="size-full" />;
+  return (
+    <div ref={containerRef} className="size-full">
+      {map && (
+        <MapMarker map={map} lat={lat} lng={lng}>
+          <NotePin emoji={emoji} color={color} />
+        </MapMarker>
+      )}
+    </div>
+  );
 }

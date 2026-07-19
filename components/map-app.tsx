@@ -11,8 +11,13 @@ import type { MapViewHandle } from "@/components/map-view";
 import { useGeolocation } from "@/hooks/use-geolocation";
 import { useNearbyNudges } from "@/hooks/use-nearby-nudges";
 import { useNotes, type NewNote } from "@/hooks/use-notes";
-import { reverseGeocode } from "@/lib/geocode";
-import { STORAGE_KEYS, type MapStyleId } from "@/lib/map-style";
+import { reverseGeocode, formatPlace } from "@/lib/geocode";
+import {
+  STORAGE_KEYS,
+  defaultMapStyle,
+  isMapStyleId,
+  type MapStyleId,
+} from "@/lib/map-style";
 import type { LatLng, Note } from "@/lib/types";
 import type { PlaceResult } from "@/lib/geocode";
 
@@ -30,9 +35,9 @@ export function MapApp({ initialNotes, userId }: MapAppProps) {
   const { notes, createNote, updateNote, deleteNote } = useNotes(initialNotes);
   const geo = useGeolocation();
   const mapRef = useRef<MapViewHandle>(null);
-  const pendingLocateRef = useRef(false);
 
   const [styleId, setStyleId] = useState<MapStyleId>("streets");
+  const [showPlaces, setShowPlaces] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [listOpen, setListOpen] = useState(false);
@@ -40,19 +45,35 @@ export function MapApp({ initialNotes, userId }: MapAppProps) {
   const selectedNote = notes.find((n) => n.id === selectedId) ?? null;
   const sheetOpen = Boolean(selectedNote || draft);
 
+  // Load persisted prefs; fall back to a theme-matching map style.
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.mapStyle) as MapStyleId;
-      if (saved === "streets" || saved === "dark" || saved === "satellite") {
-        setStyleId(saved);
-      }
-    } catch {}
+      const savedStyle = localStorage.getItem(STORAGE_KEYS.mapStyle);
+      setStyleId(isMapStyleId(savedStyle) ? savedStyle : defaultMapStyle());
+      setShowPlaces(localStorage.getItem(STORAGE_KEYS.showPlaces) !== "0");
+    } catch {
+      setStyleId(defaultMapStyle());
+    }
   }, []);
+
+  // Reminders only work while a position watch is running — if any note has
+  // one enabled, start watching without waiting for a locate tap.
+  const hasReminders = notes.some((n) => n.remind_enabled);
+  useEffect(() => {
+    if (hasReminders) geo.start();
+  }, [hasReminders, geo.start]);
 
   function changeStyle(id: MapStyleId) {
     setStyleId(id);
     try {
       localStorage.setItem(STORAGE_KEYS.mapStyle, id);
+    } catch {}
+  }
+
+  function changeShowPlaces(show: boolean) {
+    setShowPlaces(show);
+    try {
+      localStorage.setItem(STORAGE_KEYS.showPlaces, show ? "1" : "0");
     } catch {}
   }
 
@@ -92,10 +113,7 @@ export function MapApp({ initialNotes, userId }: MapAppProps) {
   const handleSearchSelect = useCallback(
     (place: PlaceResult) => {
       mapRef.current?.flyTo({ lat: place.lat, lng: place.lng }, 16);
-      startDraftAt(
-        { lat: place.lat, lng: place.lng },
-        [place.label, place.detail].filter(Boolean).join(", "),
-      );
+      startDraftAt({ lat: place.lat, lng: place.lng }, formatPlace(place));
     },
     [startDraftAt],
   );
@@ -104,17 +122,9 @@ export function MapApp({ initialNotes, userId }: MapAppProps) {
     if (geo.position) {
       mapRef.current?.flyTo(geo.position, 15);
     } else {
-      pendingLocateRef.current = true;
-      geo.start();
+      geo.start((pos) => mapRef.current?.flyTo(pos, 15));
     }
-  }, [geo]);
-
-  useEffect(() => {
-    if (geo.position && pendingLocateRef.current) {
-      pendingLocateRef.current = false;
-      mapRef.current?.flyTo(geo.position, 15);
-    }
-  }, [geo.position]);
+  }, [geo.position, geo.start]);
 
   const openNote = useCallback((note: Note) => {
     setListOpen(false);
@@ -160,6 +170,7 @@ export function MapApp({ initialNotes, userId }: MapAppProps) {
         draft={draft}
         position={geo.position}
         styleId={styleId}
+        showPlaces={showPlaces}
         onMapClick={handleMapClick}
         onMarkerClick={handleMarkerClick}
         onDraftMove={(point) => startDraftAt(point, null)}
@@ -173,9 +184,12 @@ export function MapApp({ initialNotes, userId }: MapAppProps) {
 
       <MapControls
         styleId={styleId}
+        showPlaces={showPlaces}
         geoActive={geo.active}
         onStyleChange={changeStyle}
+        onShowPlacesChange={changeShowPlaces}
         onLocate={handleLocate}
+        onLocateOff={geo.stop}
       />
 
       <button
@@ -208,6 +222,7 @@ export function MapApp({ initialNotes, userId }: MapAppProps) {
           onCreate={handleCreate}
           onUpdate={updateNote}
           onDelete={handleDelete}
+          onReminderEnabled={geo.start}
         />
       )}
     </main>

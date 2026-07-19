@@ -10,6 +10,11 @@ export interface PlaceResult {
   lng: number;
 }
 
+/** Canonical one-line address for a place — used for every notes.address write. */
+export function formatPlace(place: Pick<PlaceResult, "label" | "detail">): string {
+  return place.detail ? `${place.label}, ${place.detail}` : place.label;
+}
+
 interface PhotonFeature {
   geometry: { coordinates: [number, number] };
   properties: {
@@ -73,8 +78,7 @@ export async function reverseGeocode(point: LatLng): Promise<string | null> {
     const data = (await res.json()) as { features: PhotonFeature[] };
     const props = data.features[0]?.properties;
     if (!props) return null;
-    const { label, detail } = featureLabel(props);
-    return detail ? `${label}, ${detail}` : label;
+    return formatPlace(featureLabel(props));
   } catch {
     return null;
   }

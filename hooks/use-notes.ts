@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
-import type { Note } from "@/lib/types";
+import { NOTE_PHOTOS_BUCKET, type Note } from "@/lib/types";
 
 export type NewNote = Pick<
   Note,
@@ -61,6 +61,17 @@ export function useNotes(initialNotes: Note[]) {
 
   const deleteNote = useCallback(
     async (id: string): Promise<boolean> => {
+      // Storage objects don't cascade with the DB row — remove them first,
+      // while note_photos still knows their paths.
+      const { data: photos } = await supabase
+        .from("note_photos")
+        .select("storage_path")
+        .eq("note_id", id);
+      if (photos?.length) {
+        await supabase.storage
+          .from(NOTE_PHOTOS_BUCKET)
+          .remove(photos.map((p) => p.storage_path));
+      }
       const { error } = await supabase.from("notes").delete().eq("id", id);
       if (error) {
         toast.error(`Couldn't delete note: ${error.message}`);

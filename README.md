@@ -8,15 +8,18 @@ one lean Next.js app instead of a pnpm monorepo with a separate Express API.
 
 ## Features
 
-- 🗺️ Full-screen MapLibre map — Streets / Dark / Satellite styles, no API key
-  or billing account required (OpenFreeMap, Carto, Esri tiles)
+- 🗺️ Full-screen MapLibre map — Streets / Dark / Satellite (with labels)
+  styles, no API key or billing account required (OpenFreeMap, Carto, Esri)
+- 🌙 Map style follows your system theme until you pick one; a "Show places"
+  toggle hides the basemap's own POI labels so your pins stand out
 - 📍 Tap anywhere (or drag the pin) to drop a note: emoji, color, title, text
 - 🔎 Place search with autocomplete + reverse geocoding (Photon / OpenStreetMap)
 - 🔔 "Nudge me when I'm nearby" — geofenced reminders via the browser's
   geolocation, with toasts and system notifications and a 30-min cooldown
-- 📷 Photo attachments (Supabase Storage)
+- 📷 Photo attachments in a **private** Supabase Storage bucket, served via
+  short-lived signed URLs — "Stop sharing" and deletes actually revoke access
 - 🔗 Public share links (`/s/<token>`) with a read-only card + mini map
-- 💾 Map style and camera persist in `localStorage`
+- 💾 Map style, POI preference, and camera persist in `localStorage`
 
 ## Stack
 
@@ -44,7 +47,7 @@ pnpm dev
 
 ## Supabase setup
 
-1. Create a project and run `supabase/migrations/0001_create_notes_schema.sql`
+1. Create a project and run the files in `supabase/migrations/` in order
    (SQL editor or `supabase db push`).
 2. In **Auth → URL Configuration**, set the Site URL to your deployed domain
    and add `https://<your-domain>/auth/callback` to the redirect allowlist —

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Layers, LocateFixed, LogOut } from "lucide-react";
+import { Layers, LocateFixed, LocateOff, LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   MAP_STYLE_IDS,
   MAP_STYLE_LABELS,
+  placesToggleSupported,
   type MapStyleId,
 } from "@/lib/map-style";
 
@@ -15,16 +16,22 @@ const fabClass =
 
 interface MapControlsProps {
   styleId: MapStyleId;
+  showPlaces: boolean;
   geoActive: boolean;
   onStyleChange: (id: MapStyleId) => void;
+  onShowPlacesChange: (show: boolean) => void;
   onLocate: () => void;
+  onLocateOff: () => void;
 }
 
 export function MapControls({
   styleId,
+  showPlaces,
   geoActive,
   onStyleChange,
+  onShowPlacesChange,
   onLocate,
+  onLocateOff,
 }: MapControlsProps) {
   const [layersOpen, setLayersOpen] = useState(false);
   const router = useRouter();
@@ -48,7 +55,7 @@ export function MapControls({
 
       <div className="pointer-events-auto flex flex-col items-end gap-2.5">
         {layersOpen && (
-          <div className="flex flex-col overflow-hidden rounded-2xl border border-edge bg-surface/95 shadow-lg backdrop-blur">
+          <div className="flex w-44 flex-col overflow-hidden rounded-2xl border border-edge bg-surface/95 shadow-lg backdrop-blur">
             {MAP_STYLE_IDS.map((id) => (
               <button
                 key={id}
@@ -64,6 +71,41 @@ export function MapControls({
                 {MAP_STYLE_LABELS[id]}
               </button>
             ))}
+            <div className="border-t border-edge px-4 py-2.5">
+              <label className="flex items-center justify-between gap-2 text-sm">
+                <span
+                  className={
+                    placesToggleSupported(styleId) ? "" : "text-muted"
+                  }
+                >
+                  Show places
+                </span>
+                <input
+                  type="checkbox"
+                  checked={showPlaces}
+                  disabled={!placesToggleSupported(styleId)}
+                  onChange={(e) => onShowPlacesChange(e.target.checked)}
+                  className="size-4 accent-(--accent)"
+                />
+              </label>
+              {!placesToggleSupported(styleId) && (
+                <p className="mt-1 text-[11px] leading-tight text-muted">
+                  Always shown on Satellite
+                </p>
+              )}
+            </div>
+            {geoActive && (
+              <button
+                type="button"
+                onClick={() => {
+                  onLocateOff();
+                  setLayersOpen(false);
+                }}
+                className="flex items-center gap-2 border-t border-edge px-4 py-2.5 text-left text-sm transition hover:bg-surface-2"
+              >
+                <LocateOff className="size-4 text-muted" /> Turn off location
+              </button>
+            )}
           </div>
         )}
         <button

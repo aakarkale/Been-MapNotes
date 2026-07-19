@@ -18,6 +18,15 @@ export const NOTE_COLOR_HEX: Record<NoteColor, string> = {
   rose: "#f06292",
 };
 
+export function noteColorHex(color: string): string {
+  return NOTE_COLOR_HEX[color as NoteColor] ?? NOTE_COLOR_HEX.coral;
+}
+
+export const NOTE_PHOTOS_BUCKET = "note-photos";
+
+// Must stay within the DB check constraint (0002_harden_storage.sql).
+export const REMIND_RADIUS = { min: 50, max: 2000, step: 50, default: 250 };
+
 export const NOTE_EMOJIS = [
   "📍",
   "❤️",
