@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+:root {
+  --background: #faf9f6;
+  --foreground: #1c1d21;
+  --surface: #ffffff;
+  --surface-2: #f1efe9;
+  --border: rgba(28, 29, 33, 0.1);
+  --muted: #6b6d76;
+  --accent: #ff6b5e;
+  --accent-foreground: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #14161c;
+    --foreground: #f2f3f5;
+    --surface: #1d2026;
+    --surface-2: #262a32;
+    --border: rgba(255, 255, 255, 0.09);
+    --muted: #9aa0ab;
+    --accent: #ff7d70;
+    --accent-foreground: #211311;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-edge: var(--border);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-note-coral: #ff6b5e;
+  --color-note-amber: #f5a623;
+  --color-note-mint: #2fbf94;
+  --color-note-sky: #38a8e8;
+  --color-note-violet: #8b6cf0;
+  --color-note-rose: #f06292;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  overscroll-behavior: none;
+}
+
+/* Note pin: colored teardrop with an emoji face. */
+.note-pin {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50% 50% 50% 4px;
+  transform: rotate(-45deg);
+  border: 2.5px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: scale 0.15s ease;
+}
+
+.note-pin > span {
+  transform: rotate(45deg);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.note-pin.is-selected {
+  scale: 1.25;
+  z-index: 10;
+}
+
+/* Draft pin drop-in */
+@keyframes pin-drop {
+  from {
+    translate: 0 -14px;
+    opacity: 0;
+  }
+  to {
+    translate: 0 0;
+    opacity: 1;
+  }
+}
+
+.note-pin.is-draft {
+  animation: pin-drop 0.25s ease-out;
+}
+
+/* The "you are here" dot */
+.here-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #1d9bf0;
+  border: 3px solid #fff;
+  box-shadow:
+    0 0 0 2px rgba(29, 155, 240, 0.35),
+    0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.here-dot::after {
+  content: "";
+  position: absolute;
+  inset: -12px;
+  border-radius: 9999px;
+  background: rgba(29, 155, 240, 0.18);
+  animation: here-pulse 2.4s ease-out infinite;
+}
+
+@keyframes here-pulse {
+  0% {
+    scale: 0.4;
+    opacity: 1;
+  }
+  70% {
+    scale: 1;
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Trim MapLibre chrome to match the app */
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+  opacity: 0.75;
+}
